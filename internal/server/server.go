@@ -2,20 +2,7 @@ package server
 
 import (
 	"fmt"
-	"net"
 )
-
-type Server struct {
-}
-
-func New() *Server {
-	return &Server{}
-}
-
-func (server *Server) Start(laddr *net.TCPAddr) error {
-	fmt.Println("TODO: Start handling client connections and messages")
-	return nil
-}
 
 func (server *Server) ListClientIDs() []uint64 {
 	fmt.Println("TODO: Return the IDs of the connected clients")
