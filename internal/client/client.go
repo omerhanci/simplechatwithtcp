@@ -19,11 +19,10 @@ type Client struct {
 	conn           net.Conn
 	writer         *bufio.Writer
 	reader         *bufio.Reader
-	id             *uint64
 	incoming       chan protocol.MessageFromClient
 	whoami         chan protocol.WhoAmICommand
 	listClients    chan protocol.ListClientsCommand
-	protocolParser *ProtocolParser
+	protocolParser *protocol.ProtocolParser
 }
 
 func New() *Client {
@@ -31,7 +30,7 @@ func New() *Client {
 		incoming:       make(chan protocol.MessageFromClient),
 		whoami:         make(chan protocol.WhoAmICommand),
 		listClients:    make(chan protocol.ListClientsCommand),
-		protocolParser: NewProtocolParser(),
+		protocolParser: protocol.NewProtocolParser(),
 	}
 }
 
