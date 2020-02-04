@@ -45,6 +45,8 @@ func (cli *Client) Connect(serverAddr *net.TCPAddr) error {
 	cli.reader = bufio.NewReader(conn)
 	cli.writer = bufio.NewWriter(conn)
 
+	cli.Start()
+
 	return err
 }
 
@@ -85,9 +87,14 @@ func (cli *Client) Close() error {
 
 func (cli *Client) WhoAmI() (uint64, error) {
 	fmt.Println("TODO: Fetch the ID from the server")
+	messageLength := make([]byte, 2)
+	binary.LittleEndian.PutUint16(messageLength, 0)
 	data := []byte{uint8(protocol.CommandTypeWhoAmI)}
+	data = append(data, messageLength...)
 	cli.writer.Write(data)
+	cli.writer.Flush()
 	cmdResponse := <-cli.whoami
+	fmt.Println(cmdResponse.ClientID)
 	return cmdResponse.ClientID, nil
 }
 

@@ -22,25 +22,31 @@ func NewProtocolParser() *ProtocolParser {
 // ParseStreamedData is to parse the byte data comes from server and convert it to meaningful internal commands
 func (t *ProtocolParser) ParseStreamedData(readedByte byte) (interface{}, error) {
 
+	// this is the first byte so we'll understand the command type here
+	if t.index == 0 {
+		t.commandType = CommandType(readedByte)
+	}
+
 	t.command = append(t.command, readedByte)
+	t.index = t.index + 1
+
+	if t.index > 2 {
+		// 2nd and 3rd bytes are to store message length
+		t.messageLength = binary.LittleEndian.Uint16(t.command[1:3])
+	} else {
+		return nil, nil
+	}
 
 	// if we are not complete yet, just add byte to array and return
 	if t.index < t.messageLength {
 		return nil, nil
 	}
 
-	// this is the first byte so we'll understand the command type here
-	if t.index == 0 {
-		t.commandType = CommandType(readedByte)
-	}
-
-	// 2nd and 3rd bytes are to store message length
-	t.messageLength = binary.LittleEndian.Uint16(t.command[1:3])
-
 	if t.commandType == CommandTypeWhoAmI {
-		t.index = 0
-		t.messageLength = 0
-		return &WhoAmICommand{
+		if t.messageLength == 0 {
+			return WhoAmICommand{}, nil
+		}
+		return WhoAmICommand{
 			ClientID: binary.LittleEndian.Uint64(t.command[3:11]),
 		}, nil
 	} else if t.commandType == CommandTypeListClients {
@@ -48,11 +54,11 @@ func (t *ProtocolParser) ParseStreamedData(readedByte byte) (interface{}, error)
 		for i := 11; i < int(t.messageLength); i = i + 8 {
 			clientIDs = append(clientIDs, binary.LittleEndian.Uint64(t.command[i-8:i]))
 		}
-		return &ListClientsCommand{
+		return ListClientsCommand{
 			ConnectedClients: clientIDs,
 		}, nil
 	} else if t.commandType == CommandTypeMessageFromClient {
-		return &MessageFromClient{
+		return MessageFromClient{
 			Sender: binary.LittleEndian.Uint64(t.command[3:11]),
 			Body:   t.command[11:],
 		}, nil
@@ -65,7 +71,7 @@ func (t *ProtocolParser) ParseStreamedData(readedByte byte) (interface{}, error)
 			recipients = append(recipients, binary.LittleEndian.Uint64(t.command[i-8:i]))
 		}
 		messageBody := t.command[5+(recipientsCount*8):]
-		return &SendMessageCommand{
+		return SendMessageCommand{
 			Recipients: recipients,
 			Body:       messageBody,
 		}, nil

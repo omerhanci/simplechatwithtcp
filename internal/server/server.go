@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -15,6 +16,7 @@ type client struct {
 	conn   net.Conn
 	id     *uint64
 	writer *bufio.Writer
+	reader *bufio.Reader
 }
 
 type Server struct {
@@ -22,7 +24,7 @@ type Server struct {
 	writer         *bufio.Writer
 	reader         *bufio.Reader
 	clients        []*client
-	mutex          *sync.Mutex
+	clientMutex    *sync.Mutex
 	sendMessage    chan protocol.SendMessageCommand
 	whoami         chan protocol.WhoAmICommand
 	listClients    chan protocol.ListClientsCommand
@@ -33,11 +35,18 @@ func New() *Server {
 	return &Server{
 		sendMessage: make(chan protocol.SendMessageCommand),
 		whoami:      make(chan protocol.WhoAmICommand),
-		listClients: make(chan protocol.ListClientsCommand)}
+		listClients: make(chan protocol.ListClientsCommand),
+		clientMutex: &sync.Mutex{}}
 }
 
 func (server *Server) Start(laddr *net.TCPAddr) error {
 	fmt.Println("TODO: Start handling client connections and messages")
+
+	listener, err := net.Listen("tcp", laddr.String())
+	if err != nil {
+		log.Print(err)
+	}
+	server.listener = listener
 	for {
 		conn, err := server.listener.Accept()
 
@@ -54,10 +63,14 @@ func (server *Server) Start(laddr *net.TCPAddr) error {
 func (server *Server) serve(client *client) {
 
 	server.protocolParser = protocol.NewProtocolParser()
-	// defer server.remove(client)
+	defer server.remove(client)
 
 	for {
-		data, err := server.reader.ReadByte()
+		data, err := client.reader.ReadByte()
+
+		if err == io.EOF {
+			break
+		}
 
 		if err != nil {
 			log.Printf("Read error %v", err)
@@ -76,12 +89,13 @@ func (server *Server) serve(client *client) {
 				messageLengthBytes := make([]byte, 2)
 				clientIDBytes := make([]byte, 8)
 
-				binary.LittleEndian.PutUint64(messageLengthBytes, 11)
+				binary.LittleEndian.PutUint16(messageLengthBytes, 11)
 				binary.LittleEndian.PutUint64(clientIDBytes, *client.id)
 
 				data = append(data, messageLengthBytes...)
 				data = append(data, clientIDBytes...)
 				client.writer.Write(data)
+				client.writer.Flush()
 			case protocol.ListClientsCommand:
 				data := []byte{uint8(protocol.CommandTypeListClients)}
 				messageLengthBytes := make([]byte, 2)
@@ -106,14 +120,15 @@ func (server *Server) serve(client *client) {
 func (server *Server) accept(conn net.Conn) *client {
 	log.Printf("Accepting connection from %v, total clients: %v", conn.RemoteAddr().String(), len(server.clients)+1)
 
-	server.mutex.Lock()
-	defer server.mutex.Unlock()
+	server.clientMutex.Lock()
+	defer server.clientMutex.Unlock()
 	clientID := uint64(len(server.clients))
 
 	client := &client{
 		conn:   conn,
 		id:     &clientID,
 		writer: bufio.NewWriter(conn),
+		reader: bufio.NewReader(conn),
 	}
 
 	server.clients = append(server.clients, client)
@@ -123,10 +138,30 @@ func (server *Server) accept(conn net.Conn) *client {
 
 func (server *Server) ListClientIDs() []uint64 {
 	fmt.Println("TODO: Return the IDs of the connected clients")
-	return []uint64{}
+	clientIDs := make([]uint64, len(server.clients)-1)
+
+	for i := 0; i < len(server.clients); i++ {
+		clientIDs = append(clientIDs, *server.clients[i].id)
+	}
+	return clientIDs
 }
 
 func (server *Server) Stop() error {
 	fmt.Println("TODO: Stop accepting connections and close the existing ones")
 	return nil
+}
+
+func (server *Server) remove(client *client) {
+	server.clientMutex.Lock()
+	defer server.clientMutex.Unlock()
+
+	// remove the connections from the clients array
+	for i, check := range server.clients {
+		if check == client {
+			server.clients = append(server.clients[:i], server.clients[i+1:]...)
+		}
+	}
+
+	log.Printf("Closing connection from %v", client.conn.RemoteAddr())
+	client.conn.Close()
 }
