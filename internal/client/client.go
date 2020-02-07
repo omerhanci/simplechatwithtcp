@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 
@@ -35,34 +36,40 @@ func New() *Client {
 }
 
 func (cli *Client) Connect(serverAddr *net.TCPAddr) error {
-	fmt.Println("TODO: Connect to the server using the given address")
+	// fmt.Println("TODO: Connect to the server using the given address")
 	conn, err := net.Dial("tcp", serverAddr.String())
 
-	if err == nil {
-		cli.conn = conn
+	if err != nil {
+		return err
 	}
 
+	cli.conn = conn
 	cli.reader = bufio.NewReader(conn)
 	cli.writer = bufio.NewWriter(conn)
+	go cli.Start()
+	return nil
 
-	cli.Start()
-
-	return err
 }
 
 func (cli *Client) Start() {
-
 	for {
 		data, err := cli.reader.ReadByte()
 
+		if err == io.EOF {
+			cli.Close()
+			break
+		}
+
 		if err != nil {
 			log.Printf("Read error %v", err)
+			break
 		}
 
 		command, err := cli.protocolParser.ParseStreamedData(data)
 
 		if err != nil {
 			log.Printf("Parse error %v", err)
+			break
 		}
 
 		if command != nil {
@@ -81,12 +88,16 @@ func (cli *Client) Start() {
 }
 
 func (cli *Client) Close() error {
-	fmt.Println("TODO: Close the connection to the server")
+	// fmt.Println("Close the connection to the server")
+	err := cli.conn.Close()
+	if err != nil {
+		log.Printf("cannot close: %v", err)
+	}
 	return nil
 }
 
 func (cli *Client) WhoAmI() (uint64, error) {
-	fmt.Println("TODO: Fetch the ID from the server")
+	// fmt.Println("Fetch the ID from the server")
 	messageLength := make([]byte, 2)
 	binary.LittleEndian.PutUint16(messageLength, 0)
 	data := []byte{uint8(protocol.CommandTypeWhoAmI)}
@@ -99,16 +110,27 @@ func (cli *Client) WhoAmI() (uint64, error) {
 }
 
 func (cli *Client) ListClientIDs() ([]uint64, error) {
-	fmt.Println("TODO: Fetch the IDs from the server")
+	// fmt.Println("TODO: Fetch the IDs from the server")
+	messageLength := make([]byte, 2)
+	binary.LittleEndian.PutUint16(messageLength, 0)
 	data := []byte{uint8(protocol.CommandTypeListClients)}
+	data = append(data, messageLength...)
 	cli.writer.Write(data)
+	cli.writer.Flush()
 	cmdResponse := <-cli.listClients
+	fmt.Println(cmdResponse.ConnectedClients)
 	return cmdResponse.ConnectedClients, nil
 }
 
 func (cli *Client) SendMsg(recipients []uint64, body []byte) error {
-	fmt.Println("TODO: Send the message to the server")
-	data := []byte{uint8(protocol.CommandTypeListClients)}
+	// fmt.Println("TODO: Send the message to the server")
+	data := []byte{uint8(protocol.CommandTypeSendMessage)}
+	messageLength := make([]byte, 2)
+	binary.LittleEndian.PutUint16(messageLength, uint16(5+(len(recipients)*8)+len(body)))
+	data = append(data, messageLength...)
+	recipientLengthBytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(recipientLengthBytes, uint16(len(recipients)))
+	data = append(data, recipientLengthBytes...)
 	recipientIDBytes := make([]byte, 8)
 
 	for i := 0; i < len(recipients); i++ {
@@ -118,9 +140,15 @@ func (cli *Client) SendMsg(recipients []uint64, body []byte) error {
 
 	data = append(data, body...)
 	cli.writer.Write(data)
+	cli.writer.Flush()
 	return nil
 }
 
-func (cli *Client) HandleIncomingMessages(writeCh chan<- IncomingMessage) {
-	fmt.Println("TODO: Handle the messages from the server")
+func (cli *Client) HandleIncomingMessages(writeCh chan<- protocol.MessageFromClient) {
+	// fmt.Println("TODO: Handle the messages from the server")
+	for {
+		message := <-cli.incoming
+		writeCh <- message
+	}
+
 }

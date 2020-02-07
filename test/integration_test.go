@@ -1,12 +1,14 @@
 package test
 
 import (
-	"github.com/Applifier/golang-backend-assignment/internal/client"
-	"github.com/Applifier/golang-backend-assignment/internal/server"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"net"
 	"testing"
+
+	"github.com/Applifier/golang-backend-assignment/internal/client"
+	"github.com/Applifier/golang-backend-assignment/internal/server"
+	"github.com/Applifier/golang-backend-assignment/protocol"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const serverPort = 50000
@@ -21,17 +23,17 @@ func TestIntegration(t *testing.T) {
 	// Create clients
 	client1 := createClientAndFetchID(t, 1)
 	defer assertDoesNotError(t, client1.Close)
-	client1Ch := make(chan client.IncomingMessage)
+	client1Ch := make(chan protocol.MessageFromClient)
 	defer close(client1Ch)
 
 	client2 := createClientAndFetchID(t, 2)
 	defer assertDoesNotError(t, client2.Close)
-	client2Ch := make(chan client.IncomingMessage)
+	client2Ch := make(chan protocol.MessageFromClient)
 	defer close(client2Ch)
 
 	client3 := createClientAndFetchID(t, 3)
 	defer assertDoesNotError(t, client3.Close)
-	client3Ch := make(chan client.IncomingMessage)
+	client3Ch := make(chan protocol.MessageFromClient)
 	defer close(client3Ch)
 
 	t.Run("List other clients from each client", func(t *testing.T) {

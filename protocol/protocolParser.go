@@ -43,24 +43,37 @@ func (t *ProtocolParser) ParseStreamedData(readedByte byte) (interface{}, error)
 	}
 
 	if t.commandType == CommandTypeWhoAmI {
+		// clear the array
+		t.command = t.command[:0]
+		t.index = 0
 		if t.messageLength == 0 {
 			return WhoAmICommand{}, nil
 		}
+
 		return WhoAmICommand{
 			ClientID: binary.LittleEndian.Uint64(t.command[3:11]),
 		}, nil
 	} else if t.commandType == CommandTypeListClients {
 		var clientIDs []uint64
-		for i := 11; i < int(t.messageLength); i = i + 8 {
+		for i := 11; i <= int(t.messageLength); i = i + 8 {
 			clientIDs = append(clientIDs, binary.LittleEndian.Uint64(t.command[i-8:i]))
 		}
+		// clear the array
+		t.command = t.command[:0]
+		t.index = 0
 		return ListClientsCommand{
 			ConnectedClients: clientIDs,
 		}, nil
 	} else if t.commandType == CommandTypeMessageFromClient {
+		sender := binary.LittleEndian.Uint64(t.command[3:11])
+		body := t.command[11:]
+
+		// clear the array
+		t.command = t.command[:0]
+		t.index = 0
 		return MessageFromClient{
-			Sender: binary.LittleEndian.Uint64(t.command[3:11]),
-			Body:   t.command[11:],
+			SenderID: sender,
+			Body:     body,
 		}, nil
 	} else if t.commandType == CommandTypeSendMessage {
 		// if message type is send message we store the recipient count in 4th and 5th bytes
@@ -71,12 +84,18 @@ func (t *ProtocolParser) ParseStreamedData(readedByte byte) (interface{}, error)
 			recipients = append(recipients, binary.LittleEndian.Uint64(t.command[i-8:i]))
 		}
 		messageBody := t.command[5+(recipientsCount*8):]
+		// clear the array
+		t.command = t.command[:0]
+		t.index = 0
 		return SendMessageCommand{
 			Recipients: recipients,
 			Body:       messageBody,
 		}, nil
 	} else {
-		return nil, errors.New("Unkown Command Processed")
+		// clear the array
+		t.command = t.command[:0]
+		t.index = 0
+		return nil, errors.New("Unknown Command Processed")
 	}
 
 }

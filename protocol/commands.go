@@ -39,6 +39,6 @@ type SendMessageCommand struct {
 }
 
 type MessageFromClient struct {
-	Sender uint64
-	Body   []byte
+	SenderID uint64
+	Body     []byte
 }

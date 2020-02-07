@@ -1,13 +1,15 @@
 package test
 
 import (
-	"github.com/Applifier/golang-backend-assignment/internal/client"
-	"github.com/Applifier/golang-backend-assignment/internal/server"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"net"
 	"testing"
 	"time"
+
+	"github.com/Applifier/golang-backend-assignment/internal/client"
+	"github.com/Applifier/golang-backend-assignment/internal/server"
+	"github.com/Applifier/golang-backend-assignment/protocol"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const clientCount = 100
@@ -19,11 +21,11 @@ func TestBenchmark(t *testing.T) {
 	require.NoError(t, srv.Start(&serverAddr))
 
 	var clients []*client.Client
-	var clientChs []chan client.IncomingMessage
+	var clientChs []chan protocol.MessageFromClient
 	for i := 0; i < clientCount; i++ {
 		cli := client.New()
 		require.NoError(t, cli.Connect(&serverAddr))
-		clientCh := make(chan client.IncomingMessage)
+		clientCh := make(chan protocol.MessageFromClient)
 		go cli.HandleIncomingMessages(clientCh)
 		defer func() {
 			assert.NoError(t, cli.Close())
@@ -67,7 +69,7 @@ func TestBenchmark(t *testing.T) {
 }
 
 func waitForClientsToConnect(t *testing.T, srv *server.Server) {
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 5; i++ {
 		if clientCount != len(srv.ListClientIDs()) {
 			time.Sleep(time.Millisecond * 200)
 		} else {
