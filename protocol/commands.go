@@ -26,6 +26,7 @@ const (
 	CommandLengthType             = 1
 	CommandLengthMessageLength    = 2
 	CommandLengthRecipientsLength = 2
+	CommandLengthClient           = 8
 )
 
 // WhoAmICommand is used for getting client id

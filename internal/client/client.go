@@ -99,7 +99,7 @@ func (cli *Client) Close() error {
 // WhoAmI function is to get the client id from the server
 func (cli *Client) WhoAmI() (uint64, error) {
 	// send a whoami message to the server then wait for response to come to the channel
-	cli.sendMessageToServer(uint8(protocol.CommandTypeWhoAmI), 0, nil)
+	cli.sendMessageToServer(protocol.CommandTypeWhoAmI, 0, nil)
 	cmdResponse := <-cli.whoami
 	return cmdResponse.ClientID, nil
 }
@@ -107,7 +107,7 @@ func (cli *Client) WhoAmI() (uint64, error) {
 // ListClientIDs function is to get current connected clients' ids from the server
 func (cli *Client) ListClientIDs() ([]uint64, error) {
 	// send a listClients message to the server then wait for response to come to the channel
-	cli.sendMessageToServer(uint8(protocol.CommandTypeListClients), 0, nil)
+	cli.sendMessageToServer(protocol.CommandTypeListClients, 0, nil)
 	cmdResponse := <-cli.listClients
 	return cmdResponse.ConnectedClients, nil
 }
@@ -134,7 +134,7 @@ func (cli *Client) SendMsg(recipients []uint64, body []byte) error {
 	// commandType + messageLength + recipientsLength + recipients + messageBody
 	messageLength := protocol.CommandLengthType + protocol.CommandLengthMessageLength + protocol.CommandLengthRecipientsLength + (len(recipients) * 8) + len(body)
 
-	cli.sendMessageToServer(uint8(protocol.CommandTypeSendMessage), uint16(messageLength), dataBytes)
+	cli.sendMessageToServer(protocol.CommandTypeSendMessage, messageLength, dataBytes)
 	return nil
 }
 
@@ -153,12 +153,12 @@ func (cli *Client) HandleIncomingMessages(writeCh chan<- protocol.MessageFromCli
 
 }
 
-func (cli *Client) sendMessageToServer(commandType uint8, messageLength uint16, data []byte) {
+func (cli *Client) sendMessageToServer(commandType protocol.CommandType, messageLength int, data []byte) {
 	// first byte is for command type
-	command := []byte{commandType}
+	command := []byte{uint8(commandType)}
 	// 2nd and 3rd bytes for messageLength
 	messageLengthBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(messageLengthBytes, messageLength)
+	binary.LittleEndian.PutUint16(messageLengthBytes, uint16(messageLength))
 	command = append(command, messageLengthBytes...)
 	// rest is data
 	if data != nil {
