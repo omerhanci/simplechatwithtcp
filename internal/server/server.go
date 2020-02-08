@@ -1,28 +1,26 @@
 package server
 
 import (
-	"bufio"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"sync"
 
+	"github.com/Applifier/golang-backend-assignment/datastream"
+
 	"github.com/Applifier/golang-backend-assignment/protocol"
 )
 
+// client struct is to hold connected client data internally
 type client struct {
-	conn   net.Conn
-	id     *uint64
-	writer *bufio.Writer
-	reader *bufio.Reader
+	dataStreamer datastream.IDataStreamer
+	id           *uint64
 }
 
+// Server struct
 type Server struct {
-	listener       net.Listener
-	writer         *bufio.Writer
-	reader         *bufio.Reader
+	dataStreamer   datastream.IDataStreamer
 	clients        []*client
 	clientIDs      []uint64
 	clientMutex    *sync.Mutex
@@ -32,6 +30,7 @@ type Server struct {
 	protocolParser *protocol.ProtocolParser
 }
 
+// New is to create new server and return
 func New() *Server {
 	return &Server{
 		sendMessage: make(chan protocol.SendMessageCommand),
@@ -40,42 +39,46 @@ func New() *Server {
 		clientMutex: &sync.Mutex{}}
 }
 
-func (server *Server) listen(listener net.Listener) error {
-	server.listener = listener
+// listen function listens and accepts client connections
+func (server *Server) listen() error {
 	for {
-		conn, err := server.listener.Accept()
+		clientStreamer, err := server.dataStreamer.Accept()
 
 		if err != nil {
 			log.Print(err)
 		} else {
-			client := server.accept(conn)
+			client := server.accept(clientStreamer)
 			go server.serve(client)
 		}
 
 	}
 }
 
+// Start function starts the server and make it ready to accept connections
 func (server *Server) Start(laddr *net.TCPAddr) error {
-	fmt.Println("Start handling client connections and messages")
+	dataStreamerProducer := datastream.TcpDataStreamProducer{}
+	dataStreamer := dataStreamerProducer.Produce()
+	listener, err := dataStreamer.CreateListener(laddr)
 
-	listener, err := net.Listen("tcp", laddr.String())
 	if err != nil {
 		log.Print(err)
 		return err
 	}
+	server.dataStreamer = listener
 
-	go server.listen(listener)
+	go server.listen()
 	return nil
 
 }
 
+// serve function is to read streamed data from connected client and turn it to meaningful commands
 func (server *Server) serve(client *client) {
 
 	server.protocolParser = protocol.NewProtocolParser()
 	defer server.remove(client)
 
 	for {
-		data, err := client.reader.ReadByte()
+		data, err := client.dataStreamer.ReadByte()
 
 		if err == io.EOF {
 			server.Stop()
@@ -106,8 +109,8 @@ func (server *Server) serve(client *client) {
 
 				data = append(data, messageLengthBytes...)
 				data = append(data, clientIDBytes...)
-				client.writer.Write(data)
-				client.writer.Flush()
+				client.dataStreamer.Write(data)
+				client.dataStreamer.Flush()
 			case protocol.ListClientsCommand:
 				data := []byte{uint8(protocol.CommandTypeListClients)}
 				messageLengthBytes := make([]byte, 2)
@@ -120,8 +123,8 @@ func (server *Server) serve(client *client) {
 						data = append(data, connectedClientBytes...)
 					}
 				}
-				client.writer.Write(data)
-				client.writer.Flush()
+				client.dataStreamer.Write(data)
+				client.dataStreamer.Flush()
 
 			case protocol.SendMessageCommand:
 				data := []byte{uint8(protocol.CommandTypeMessageFromClient)}
@@ -135,9 +138,9 @@ func (server *Server) serve(client *client) {
 				data = append(data, senderBytes...)
 				data = append(data, bodyBytes...)
 				for i := 0; i < len(sendMessageCommand.Recipients); i++ {
-					client := server.getClientById(sendMessageCommand.Recipients[i])
-					client.writer.Write(data)
-					client.writer.Flush()
+					client := server.getClientByID(sendMessageCommand.Recipients[i])
+					client.dataStreamer.Write(data)
+					client.dataStreamer.Flush()
 				}
 
 			default:
@@ -147,7 +150,8 @@ func (server *Server) serve(client *client) {
 	}
 }
 
-func (server *Server) getClientById(clientID uint64) *client {
+// getClientById gets client id and returns id with that client
+func (server *Server) getClientByID(clientID uint64) *client {
 	for i := 0; i < len(server.clients); i++ {
 		if *server.clients[i].id == clientID {
 			return server.clients[i]
@@ -156,18 +160,15 @@ func (server *Server) getClientById(clientID uint64) *client {
 	return nil
 }
 
-func (server *Server) accept(conn net.Conn) *client {
-	// log.Printf("Accepting connection from %v, total clients: %v", conn.RemoteAddr().String(), len(server.clients)+1)
-
+// accept connections from connected client add it to connected clients
+func (server *Server) accept(clientStreamer datastream.IDataStreamer) *client {
 	server.clientMutex.Lock()
 	defer server.clientMutex.Unlock()
 	clientID := uint64(len(server.clients) + 1)
 
 	client := &client{
-		conn:   conn,
-		id:     &clientID,
-		writer: bufio.NewWriter(conn),
-		reader: bufio.NewReader(conn),
+		dataStreamer: clientStreamer,
+		id:           &clientID,
 	}
 
 	server.clients = append(server.clients, client)
@@ -176,20 +177,21 @@ func (server *Server) accept(conn net.Conn) *client {
 	return client
 }
 
+// ListClientIDs return the connected clients ids
 func (server *Server) ListClientIDs() []uint64 {
-	// fmt.Println("Return the IDs of the connected clients")
 	return server.clientIDs
 }
 
+// Stop accepting connections and close the existing ones
 func (server *Server) Stop() error {
-	// fmt.Println("TODO: Stop accepting connections and close the existing ones")
-	server.listener.Close()
+	server.dataStreamer.CloseListener()
 	for i := 0; i < len(server.clients); i++ {
-		server.clients[i].conn.Close()
+		server.clients[i].dataStreamer.CloseConnection()
 	}
 	return nil
 }
 
+// remove the connected client
 func (server *Server) remove(client *client) {
 	server.clientMutex.Lock()
 	defer server.clientMutex.Unlock()
@@ -202,6 +204,5 @@ func (server *Server) remove(client *client) {
 		}
 	}
 
-	// log.Printf("Closing connection from %v", client.conn.RemoteAddr())
-	client.conn.Close()
+	client.dataStreamer.CloseConnection()
 }

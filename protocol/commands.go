@@ -22,6 +22,12 @@ const (
 	CommandTypeUnknown CommandType = 0
 )
 
+const (
+	CommandLengthType             = 1
+	CommandLengthMessageLength    = 2
+	CommandLengthRecipientsLength = 2
+)
+
 // WhoAmICommand is used for getting client id
 type WhoAmICommand struct {
 	ClientID uint64
