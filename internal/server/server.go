@@ -7,6 +7,8 @@ import (
 	"net"
 	"sync"
 
+	"github.com/Applifier/golang-backend-assignment/channels"
+
 	"github.com/Applifier/golang-backend-assignment/datastream"
 
 	"github.com/Applifier/golang-backend-assignment/protocol"
@@ -15,36 +17,41 @@ import (
 // client struct is to hold connected client data internally
 type client struct {
 	dataStreamer datastream.IDataStreamer
-	id           *uint64
+	id           uint64
 }
 
 // Server struct
 type Server struct {
-	dataStreamer   datastream.IDataStreamer
-	clients        []*client
-	clientIDs      []uint64
-	clientMutex    *sync.Mutex
-	sendMessage    chan protocol.SendMessageCommand
-	whoami         chan protocol.WhoAmICommand
-	listClients    chan protocol.ListClientsCommand
-	protocolParser *protocol.ProtocolParser
+	dataStreamer           datastream.IDataStreamer
+	clients                []*client
+	clientIDs              []uint64
+	clientMutex            *sync.Mutex
+	commandChannels        channels.ICommandChannels
+	protocolParser         protocol.IProtocolParser
+	protocolParserProducer protocol.IProtocolParserProducer
 }
 
 // New is to create new server and return
 func New() *Server {
+	commandChannelsProducer := channels.CommandChannelsProducer{}
+	commandChannels := commandChannelsProducer.Produce()
+
+	dataStreamerProducer := datastream.TcpDataStreamProducer{}
+	dataStreamer := dataStreamerProducer.Produce()
+
+	protocolParserProducer := &protocol.ProtocolParserProducer{}
+
 	return &Server{
-		sendMessage: make(chan protocol.SendMessageCommand),
-		whoami:      make(chan protocol.WhoAmICommand),
-		listClients: make(chan protocol.ListClientsCommand),
-		clientMutex: &sync.Mutex{}}
+		commandChannels:        commandChannels,
+		clientMutex:            &sync.Mutex{},
+		protocolParserProducer: protocolParserProducer,
+		dataStreamer:           dataStreamer}
 }
 
 // Start function starts the server and make it ready to accept connections
 func (server *Server) Start(laddr *net.TCPAddr) error {
-	dataStreamerProducer := datastream.TcpDataStreamProducer{}
-	dataStreamer := dataStreamerProducer.Produce()
-	listener, err := dataStreamer.CreateListener(laddr)
 
+	listener, err := server.dataStreamer.CreateListener(laddr)
 	if err != nil {
 		log.Print(err)
 		return err
@@ -79,11 +86,11 @@ func (server *Server) accept(clientStreamer datastream.IDataStreamer) *client {
 
 	client := &client{
 		dataStreamer: clientStreamer,
-		id:           &clientID,
+		id:           clientID,
 	}
 
 	server.clients = append(server.clients, client)
-	server.clientIDs = append(server.clientIDs, *client.id)
+	server.clientIDs = append(server.clientIDs, client.id)
 
 	return client
 }
@@ -91,14 +98,17 @@ func (server *Server) accept(clientStreamer datastream.IDataStreamer) *client {
 // serve function is to read streamed data from connected client and turn it to meaningful commands
 func (server *Server) serve(client *client) {
 
-	server.protocolParser = protocol.NewProtocolParser()
+	// create new parser for this client only
+	protocolParser := server.protocolParserProducer.Produce()
+	server.protocolParser = protocolParser
+
 	defer server.remove(client)
 
 	for {
 		data, err := client.dataStreamer.ReadByte()
 
 		if err == io.EOF {
-			server.Stop()
+			log.Printf("EOF reached")
 			break
 		}
 
@@ -181,7 +191,7 @@ func (server *Server) handleWhoAmICommand(client *client) {
 	dataBytes := []byte{}
 
 	clientIDBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(clientIDBytes, *client.id)
+	binary.LittleEndian.PutUint64(clientIDBytes, client.id)
 	dataBytes = append(dataBytes, clientIDBytes...)
 
 	// calculate command length (commandType + messageLength + clientID)
@@ -194,8 +204,8 @@ func (server *Server) handleListClientsCommand(client *client) {
 
 	connectedClientBytes := make([]byte, 8)
 	for i := 0; i < len(server.clients); i++ {
-		if *server.clients[i].id != *client.id {
-			binary.LittleEndian.PutUint64(connectedClientBytes, *server.clients[i].id)
+		if server.clients[i].id != client.id {
+			binary.LittleEndian.PutUint64(connectedClientBytes, server.clients[i].id)
 			dataBytes = append(dataBytes, connectedClientBytes...)
 		}
 	}
@@ -209,7 +219,7 @@ func (server *Server) handleSendMessageCommand(client *client, command protocol.
 	dataBytes := []byte{}
 
 	senderBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(senderBytes, *client.id)
+	binary.LittleEndian.PutUint64(senderBytes, client.id)
 
 	bodyBytes := command.Body
 
@@ -227,7 +237,7 @@ func (server *Server) handleSendMessageCommand(client *client, command protocol.
 // getClientById gets client id and returns id with that client
 func (server *Server) getClientByID(clientID uint64) *client {
 	for i := 0; i < len(server.clients); i++ {
-		if *server.clients[i].id == clientID {
+		if server.clients[i].id == clientID {
 			return server.clients[i]
 		}
 	}

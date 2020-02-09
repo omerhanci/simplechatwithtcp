@@ -21,7 +21,10 @@ type ProtocolParser struct {
 	commandType   CommandType
 }
 
-func NewProtocolParser() *ProtocolParser {
+type ProtocolParserProducer struct {
+}
+
+func (t *ProtocolParserProducer) Produce() IProtocolParser {
 	return &ProtocolParser{
 		messageLength: 0,
 		index:         0,

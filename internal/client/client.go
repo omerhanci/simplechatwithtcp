@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 
+	"github.com/Applifier/golang-backend-assignment/channels"
+
 	"github.com/Applifier/golang-backend-assignment/datastream"
 
 	"github.com/Applifier/golang-backend-assignment/protocol"
@@ -13,30 +15,31 @@ import (
 
 // Client structure
 type Client struct {
-	dataStream     datastream.IDataStreamer
-	incoming       chan protocol.MessageFromClient
-	whoami         chan protocol.WhoAmICommand
-	listClients    chan protocol.ListClientsCommand
-	protocolParser *protocol.ProtocolParser
+	dataStream      datastream.IDataStreamer
+	commandChannels channels.ICommandChannels
+	protocolParser  protocol.IProtocolParser
 }
 
 // New is to create new client and return
 func New() *Client {
+	dataStreamerProducer := datastream.TcpDataStreamProducer{}
+	dataStreamer := dataStreamerProducer.Produce()
+
+	protocolParserProducer := protocol.ProtocolParserProducer{}
+	protocolParser := protocolParserProducer.Produce()
+
+	commandChannelsProducer := channels.CommandChannelsProducer{}
+	commandChannels := commandChannelsProducer.Produce()
 	return &Client{
-		incoming:       make(chan protocol.MessageFromClient),
-		whoami:         make(chan protocol.WhoAmICommand),
-		listClients:    make(chan protocol.ListClientsCommand),
-		protocolParser: protocol.NewProtocolParser(),
+		dataStream:      dataStreamer,
+		commandChannels: commandChannels,
+		protocolParser:  protocolParser,
 	}
 }
 
 // Connect function is to connect to server given serverAddr parameter
 func (cli *Client) Connect(serverAddr *net.TCPAddr) error {
-
-	dataStreamerProducer := datastream.TcpDataStreamProducer{}
-	dataStreamer := dataStreamerProducer.Produce()
-	tcpDataStreamer, err := dataStreamer.CreateConnection(serverAddr)
-
+	tcpDataStreamer, err := cli.dataStream.CreateConnection(serverAddr)
 	cli.dataStream = tcpDataStreamer
 	if err != nil {
 		return err
@@ -54,7 +57,6 @@ func (cli *Client) Start() {
 
 		// server is closed, we should close the connection
 		if err == io.EOF {
-			cli.Close()
 			break
 		}
 
@@ -73,16 +75,7 @@ func (cli *Client) Start() {
 
 		// if command is not nil, then we have a comlete command object, send it to the related channels
 		if command != nil {
-			switch v := command.(type) {
-			case protocol.WhoAmICommand:
-				cli.whoami <- v
-			case protocol.ListClientsCommand:
-				cli.listClients <- v
-			case protocol.MessageFromClient:
-				cli.incoming <- v
-			default:
-				log.Printf("Unknown command: %v", v)
-			}
+			cli.commandChannels.Add(command)
 		}
 	}
 }
@@ -92,24 +85,39 @@ func (cli *Client) Close() error {
 	err := cli.dataStream.CloseConnection()
 	if err != nil {
 		log.Printf("cannot close: %v", err)
+		return err
 	}
 	return nil
 }
 
 // WhoAmI function is to get the client id from the server
-func (cli *Client) WhoAmI() (uint64, error) {
+func (cli *Client) WhoAmI() (*uint64, error) {
 	// send a whoami message to the server then wait for response to come to the channel
-	cli.sendMessageToServer(protocol.CommandTypeWhoAmI, 0, nil)
-	cmdResponse := <-cli.whoami
-	return cmdResponse.ClientID, nil
+	err := cli.sendMessageToServer(protocol.CommandTypeWhoAmI, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	cmdResponse, err := cli.commandChannels.Get(protocol.CommandTypeWhoAmI)
+	if err != nil {
+		return nil, err
+	}
+	clientID := cmdResponse.(protocol.WhoAmICommand).ClientID
+	return &clientID, nil
 }
 
 // ListClientIDs function is to get current connected clients' ids from the server
-func (cli *Client) ListClientIDs() ([]uint64, error) {
+func (cli *Client) ListClientIDs() (*[]uint64, error) {
 	// send a listClients message to the server then wait for response to come to the channel
-	cli.sendMessageToServer(protocol.CommandTypeListClients, 0, nil)
-	cmdResponse := <-cli.listClients
-	return cmdResponse.ConnectedClients, nil
+	err := cli.sendMessageToServer(protocol.CommandTypeListClients, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	cmdResponse, err := cli.commandChannels.Get(protocol.CommandTypeListClients)
+	if err != nil {
+		return nil, err
+	}
+	connectedClients := cmdResponse.(protocol.ListClientsCommand).ConnectedClients
+	return &connectedClients, nil
 }
 
 // SendMsg function is to Send messages to the other connected clients
@@ -134,7 +142,10 @@ func (cli *Client) SendMsg(recipients []uint64, body []byte) error {
 	// commandType + messageLength + recipientsLength + recipients + messageBody
 	messageLength := protocol.CommandLengthType + protocol.CommandLengthMessageLength + protocol.CommandLengthRecipientsLength + (len(recipients) * 8) + len(body)
 
-	cli.sendMessageToServer(protocol.CommandTypeSendMessage, messageLength, dataBytes)
+	err := cli.sendMessageToServer(protocol.CommandTypeSendMessage, messageLength, dataBytes)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -147,13 +158,13 @@ func (cli *Client) HandleIncomingMessages(writeCh chan<- protocol.MessageFromCli
 		}
 	}()
 	for {
-		message := <-cli.incoming
-		writeCh <- message
+		message, _ := cli.commandChannels.Get(protocol.CommandTypeMessageFromClient)
+		writeCh <- message.(protocol.MessageFromClient)
 	}
 
 }
 
-func (cli *Client) sendMessageToServer(commandType protocol.CommandType, messageLength int, data []byte) {
+func (cli *Client) sendMessageToServer(commandType protocol.CommandType, messageLength int, data []byte) error {
 	// first byte is for command type
 	command := []byte{uint8(commandType)}
 	// 2nd and 3rd bytes for messageLength
@@ -165,7 +176,15 @@ func (cli *Client) sendMessageToServer(commandType protocol.CommandType, message
 		command = append(command, data...)
 	}
 
-	//todo error handling
-	cli.dataStream.Write(command)
-	cli.dataStream.Flush()
+	_, err := cli.dataStream.Write(command)
+	if err != nil {
+		return err
+	}
+
+	err = cli.dataStream.Flush()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
