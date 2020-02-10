@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/Applifier/golang-backend-assignment/channels"
 	"github.com/Applifier/golang-backend-assignment/datastream"
@@ -208,7 +209,7 @@ func TestWhoAmIFunctionShouldReturnID(t *testing.T) {
 	}
 
 	response, err := client.WhoAmI()
-	assert.Equal(t, *response, fakeWhoAmICommand.ClientID)
+	assert.Equal(t, response, fakeWhoAmICommand.ClientID)
 	assert.Equal(t, err, nil)
 }
 
@@ -228,7 +229,7 @@ func TestWhoAmIFunctionShouldReturnErrorIfWriteReturnError(t *testing.T) {
 	}
 
 	response, err := client.WhoAmI()
-	assert.Nil(t, response)
+	assert.Equal(t, uint64(0), response)
 	assert.Equal(t, err, fakeWriteError)
 }
 
@@ -249,7 +250,7 @@ func TestWhoAmIFunctionShouldReturnErrorIfFlushReturnError(t *testing.T) {
 	}
 
 	response, err := client.WhoAmI()
-	assert.Nil(t, response)
+	assert.Equal(t, uint64(0), response)
 	assert.Equal(t, err, fakeWriteError)
 }
 
@@ -273,7 +274,7 @@ func TestWhoAmIFunctionShouldReturnErrorIfGetReturnError(t *testing.T) {
 	}
 
 	response, err := client.WhoAmI()
-	assert.Nil(t, response)
+	assert.Equal(t, uint64(0), response)
 	assert.Equal(t, err, fakeGetError)
 }
 
@@ -296,7 +297,7 @@ func TestListClientIDsFunctionShouldReturnConnectedClients(t *testing.T) {
 	}
 
 	response, err := client.ListClientIDs()
-	assert.Equal(t, *response, fakeConnectedClientsCommand.ConnectedClients)
+	assert.Equal(t, response, fakeConnectedClientsCommand.ConnectedClients)
 	assert.Equal(t, err, nil)
 }
 
@@ -440,4 +441,25 @@ func TestHandleIncomingMsgShouldWriteToChannel(t *testing.T) {
 
 	incomingChan := make(chan<- protocol.MessageFromClient)
 	go client.HandleIncomingMessages(incomingChan)
+	time.Sleep(20 * time.Millisecond) // to ensure above routine started
+}
+
+func TestHandleIncomingMsgShouldBeRecoveredIfErrorOccur(t *testing.T) {
+
+	fakeDataStreamer := new(datastream.MockTcpDataStream)
+	fakeProtocolParser := new(protocol.MockProtocolParser)
+	fakeCommandChannels := new(channels.MockCommandChannels)
+
+	client := &Client{
+		commandChannels: fakeCommandChannels,
+		dataStream:      fakeDataStreamer,
+		protocolParser:  fakeProtocolParser,
+	}
+	fakeCommandChannels.On("Get", mock.Anything).Return(fakeMessageFromClientCommand, errors.New("read error")).Run(func(args mock.Arguments) {
+		assert.Equal(t, args.Get(0), protocol.CommandTypeMessageFromClient)
+	})
+
+	incomingChan := make(chan<- protocol.MessageFromClient)
+	go client.HandleIncomingMessages(incomingChan)
+	time.Sleep(20 * time.Millisecond) // to ensure above routine started
 }

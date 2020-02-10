@@ -91,22 +91,22 @@ func (cli *Client) Close() error {
 }
 
 // WhoAmI function is to get the client id from the server
-func (cli *Client) WhoAmI() (*uint64, error) {
+func (cli *Client) WhoAmI() (uint64, error) {
 	// send a whoami message to the server then wait for response to come to the channel
 	err := cli.sendMessageToServer(protocol.CommandTypeWhoAmI, 0, nil)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	cmdResponse, err := cli.commandChannels.Get(protocol.CommandTypeWhoAmI)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	clientID := cmdResponse.(protocol.WhoAmICommand).ClientID
-	return &clientID, nil
+	return clientID, nil
 }
 
 // ListClientIDs function is to get current connected clients' ids from the server
-func (cli *Client) ListClientIDs() (*[]uint64, error) {
+func (cli *Client) ListClientIDs() ([]uint64, error) {
 	// send a listClients message to the server then wait for response to come to the channel
 	err := cli.sendMessageToServer(protocol.CommandTypeListClients, 0, nil)
 	if err != nil {
@@ -117,7 +117,7 @@ func (cli *Client) ListClientIDs() (*[]uint64, error) {
 		return nil, err
 	}
 	connectedClients := cmdResponse.(protocol.ListClientsCommand).ConnectedClients
-	return &connectedClients, nil
+	return connectedClients, nil
 }
 
 // SendMsg function is to Send messages to the other connected clients
@@ -154,11 +154,14 @@ func (cli *Client) HandleIncomingMessages(writeCh chan<- protocol.MessageFromCli
 	defer func() {
 		if err := recover(); err != nil {
 			log.Printf("run time panic: %v", err)
-			cli.Close()
 		}
 	}()
 	for {
-		message, _ := cli.commandChannels.Get(protocol.CommandTypeMessageFromClient)
+		message, err := cli.commandChannels.Get(protocol.CommandTypeMessageFromClient)
+		if err != nil {
+			log.Printf("Cannot get message from client: %v", err)
+			break
+		}
 		writeCh <- message.(protocol.MessageFromClient)
 	}
 

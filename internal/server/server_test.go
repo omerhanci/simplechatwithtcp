@@ -214,17 +214,22 @@ func TestServeFunctionShouldSendConnectedClientsIfReceiveListClientsCommand(t *t
 	fakeCommandChannels := new(channels.MockCommandChannels)
 	fakeProtocolParser := new(protocol.MockProtocolParser)
 	fakeProtocolParserProducer := new(protocol.MockProtocolParserProducer)
-	server := &Server{
-		commandChannels:        fakeCommandChannels,
-		dataStreamer:           fakeDataStreamer,
-		protocolParser:         fakeProtocolParser,
-		protocolParserProducer: fakeProtocolParserProducer,
-		clientMutex:            &sync.Mutex{}}
-
 	fakeClient := &client{
 		dataStreamer: fakeDataStreamer,
 		id:           uint64(1),
 	}
+	fakeClient2 := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(2),
+	}
+	server := &Server{
+		commandChannels:        fakeCommandChannels,
+		dataStreamer:           fakeDataStreamer,
+		protocolParser:         fakeProtocolParser,
+		clients:                []*client{fakeClient, fakeClient2},
+		clientIDs:              []uint64{fakeClient.id, fakeClient2.id},
+		protocolParserProducer: fakeProtocolParserProducer,
+		clientMutex:            &sync.Mutex{}}
 
 	fakeDataStreamer.On("ReadByte", mock.Anything).Return(byte(0), nil)
 	fakeProtocolParser.On("ParseStreamedData", mock.Anything).Return(fakeConnectedClientsCommand, nil)
@@ -269,4 +274,136 @@ func TestServeFunctionShouldSendMessageIfReceiveSendMessageCommand(t *testing.T)
 
 	go server.serve(fakeClient)
 	time.Sleep(20 * time.Millisecond) // to ensure above routine started
+}
+
+func TestServeFunctionShouldNotSendMessageIfReceivedCommandIsNotKnown(t *testing.T) {
+
+	fakeDataStreamer := new(datastream.MockTcpDataStream)
+	fakeCommandChannels := new(channels.MockCommandChannels)
+	fakeProtocolParser := new(protocol.MockProtocolParser)
+	fakeProtocolParserProducer := new(protocol.MockProtocolParserProducer)
+	fakeClient := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(1),
+	}
+	server := &Server{
+		commandChannels:        fakeCommandChannels,
+		dataStreamer:           fakeDataStreamer,
+		protocolParser:         fakeProtocolParser,
+		protocolParserProducer: fakeProtocolParserProducer,
+		clients:                []*client{fakeClient},
+		clientIDs:              []uint64{fakeClient.id},
+		clientMutex:            &sync.Mutex{}}
+
+	fakeDataStreamer.On("ReadByte", mock.Anything).Return(byte(0), nil)
+	fakeProtocolParserProducer.On("Produce").Return(fakeProtocolParser).Once()
+	fakeProtocolParser.On("ParseStreamedData", mock.Anything).Return("UnknownCommand", nil)
+
+	go server.serve(fakeClient)
+	time.Sleep(20 * time.Millisecond) // to ensure above routine started
+}
+
+func TestListClientIDs(t *testing.T) {
+
+	fakeDataStreamer := new(datastream.MockTcpDataStream)
+	fakeClient := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(1),
+	}
+
+	fakeClientIDs := []uint64{fakeClient.id}
+	server := &Server{
+		dataStreamer: fakeDataStreamer,
+		clients:      []*client{fakeClient},
+		clientIDs:    fakeClientIDs,
+		clientMutex:  &sync.Mutex{}}
+
+	clientIDs := server.ListClientIDs()
+	assert.Equal(t, clientIDs, fakeClientIDs)
+}
+
+func TestStopShouldCloseListenerAndCloseExistingConnections(t *testing.T) {
+
+	fakeCommandChannels := new(channels.MockCommandChannels)
+	fakeProtocolParser := new(protocol.MockProtocolParser)
+	fakeProtocolParserProducer := new(protocol.MockProtocolParserProducer)
+	fakeDataStreamer := new(datastream.MockTcpDataStream)
+	fakeClient := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(1),
+	}
+	fakeClient2 := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(2),
+	}
+
+	server := &Server{
+		commandChannels:        fakeCommandChannels,
+		dataStreamer:           fakeDataStreamer,
+		protocolParser:         fakeProtocolParser,
+		protocolParserProducer: fakeProtocolParserProducer,
+		clients:                []*client{fakeClient, fakeClient2},
+		clientIDs:              []uint64{fakeClient.id, fakeClient2.id},
+		clientMutex:            &sync.Mutex{}}
+
+	fakeDataStreamer.On("CloseListener").Return(nil).Once()
+	fakeDataStreamer.On("CloseConnection").Return(nil).Twice()
+	response := server.Stop()
+	assert.Nil(t, response)
+}
+
+func TestRemoveFunctionShouldRemoveClientFromTheClients(t *testing.T) {
+
+	fakeCommandChannels := new(channels.MockCommandChannels)
+	fakeProtocolParser := new(protocol.MockProtocolParser)
+	fakeProtocolParserProducer := new(protocol.MockProtocolParserProducer)
+	fakeDataStreamer := new(datastream.MockTcpDataStream)
+	fakeClient := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(1),
+	}
+	fakeClient2 := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(2),
+	}
+
+	server := &Server{
+		commandChannels:        fakeCommandChannels,
+		dataStreamer:           fakeDataStreamer,
+		protocolParser:         fakeProtocolParser,
+		protocolParserProducer: fakeProtocolParserProducer,
+		clients:                []*client{fakeClient, fakeClient2},
+		clientIDs:              []uint64{fakeClient.id, fakeClient2.id},
+		clientMutex:            &sync.Mutex{}}
+
+	fakeDataStreamer.On("CloseConnection").Return(nil).Twice()
+	server.remove(fakeClient)
+
+	assert.Equal(t, len(server.clients), 1)
+	assert.Equal(t, len(server.clientIDs), 1)
+	assert.Equal(t, server.clients[0], fakeClient2)
+}
+
+func TestGetClientByIDShouldReturnNilIfClientCannotFound(t *testing.T) {
+
+	fakeDataStreamer := new(datastream.MockTcpDataStream)
+	fakeClient := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(1),
+	}
+	fakeClient2 := &client{
+		dataStreamer: fakeDataStreamer,
+		id:           uint64(2),
+	}
+
+	server := &Server{
+		dataStreamer: fakeDataStreamer,
+		clients:      []*client{fakeClient, fakeClient2},
+		clientIDs:    []uint64{fakeClient.id, fakeClient2.id},
+		clientMutex:  &sync.Mutex{}}
+
+	fakeDataStreamer.On("CloseConnection").Return(nil).Twice()
+	response := server.getClientByID(5)
+
+	assert.Nil(t, response)
 }
