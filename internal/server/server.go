@@ -100,7 +100,6 @@ func (server *Server) serve(client *client) {
 
 	// create new parser for this client only
 	protocolParser := server.protocolParserProducer.Produce()
-	server.protocolParser = protocolParser
 
 	defer server.remove(client)
 
@@ -117,7 +116,7 @@ func (server *Server) serve(client *client) {
 			break
 		}
 
-		command, err := server.protocolParser.ParseStreamedData(data)
+		command, err := protocolParser.ParseStreamedData(data)
 
 		if err != nil {
 			log.Printf("Parse error %v", err)
@@ -147,6 +146,8 @@ func (server *Server) ListClientIDs() []uint64 {
 
 // Stop accepting connections and close the existing ones
 func (server *Server) Stop() error {
+	server.clientMutex.Lock()
+	defer server.clientMutex.Unlock()
 	server.dataStreamer.CloseListener()
 	for i := 0; i < len(server.clients); i++ {
 		server.clients[i].dataStreamer.CloseConnection()
@@ -171,6 +172,8 @@ func (server *Server) remove(client *client) {
 }
 
 func (server *Server) sendMessageToClient(client *client, commandType protocol.CommandType, messageLength int, data []byte) {
+	server.clientMutex.Lock()
+	defer server.clientMutex.Unlock()
 	// first byte is for command type
 	command := []byte{uint8(commandType)}
 	// 2nd and 3rd bytes for messageLength
@@ -181,7 +184,6 @@ func (server *Server) sendMessageToClient(client *client, commandType protocol.C
 	if data != nil {
 		command = append(command, data...)
 	}
-
 	//todo error handling
 	client.dataStreamer.Write(command)
 	client.dataStreamer.Flush()
