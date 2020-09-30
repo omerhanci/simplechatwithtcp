@@ -1,7 +1,6 @@
 package client
 
 import (
-	"encoding/binary"
 	"io"
 	"log"
 	"net"
@@ -41,6 +40,7 @@ func New() *Client {
 func (cli *Client) Connect(serverAddr *net.TCPAddr) error {
 	tcpDataStreamer, err := cli.dataStream.CreateConnection(serverAddr)
 	cli.dataStream = tcpDataStreamer
+
 	if err != nil {
 		return err
 	}
@@ -92,8 +92,9 @@ func (cli *Client) Close() error {
 
 // WhoAmI function is to get the client id from the server
 func (cli *Client) WhoAmI() (uint64, error) {
+	command := protocol.QueryCommand{}
 	// send a whoami message to the server then wait for response to come to the channel
-	err := cli.sendMessageToServer(protocol.CommandTypeWhoAmI, 0, nil)
+	err := cli.sendMessageToServer(command.CreateQueryCommand(protocol.CommandTypeWhoAmI))
 	if err != nil {
 		return 0, err
 	}
@@ -107,8 +108,9 @@ func (cli *Client) WhoAmI() (uint64, error) {
 
 // ListClientIDs function is to get current connected clients' ids from the server
 func (cli *Client) ListClientIDs() ([]uint64, error) {
+	command := protocol.QueryCommand{}
 	// send a listClients message to the server then wait for response to come to the channel
-	err := cli.sendMessageToServer(protocol.CommandTypeListClients, 0, nil)
+	err := cli.sendMessageToServer(command.CreateQueryCommand(protocol.CommandTypeListClients))
 	if err != nil {
 		return nil, err
 	}
@@ -122,27 +124,8 @@ func (cli *Client) ListClientIDs() ([]uint64, error) {
 
 // SendMsg function is to Send messages to the other connected clients
 func (cli *Client) SendMsg(recipients []uint64, body []byte) error {
-	dataBytes := []byte{}
-	// we have a special case here, 4th and 5th bytes for recipient length, send them as data
-	recipientLengthBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(recipientLengthBytes, uint16(len(recipients)))
-	dataBytes = append(dataBytes, recipientLengthBytes...)
-
-	// add recipients to the data
-	recipientIDBytes := make([]byte, 8)
-	for i := 0; i < len(recipients); i++ {
-		binary.LittleEndian.PutUint64(recipientIDBytes, recipients[i])
-		dataBytes = append(dataBytes, recipientIDBytes...)
-	}
-
-	// and finally add the message body
-	dataBytes = append(dataBytes, body...)
-
-	// calculate message length
-	// commandType + messageLength + recipientsLength + recipients + messageBody
-	messageLength := protocol.CommandLengthType + protocol.CommandLengthMessageLength + protocol.CommandLengthRecipientsLength + (len(recipients) * 8) + len(body)
-
-	err := cli.sendMessageToServer(protocol.CommandTypeSendMessage, messageLength, dataBytes)
+	command := protocol.SendMessageCommand{Recipients: recipients, Body: body}
+	err := cli.sendMessageToServer(command.ToByteArray())
 	if err != nil {
 		return err
 	}
@@ -167,19 +150,8 @@ func (cli *Client) HandleIncomingMessages(writeCh chan<- protocol.MessageFromCli
 
 }
 
-func (cli *Client) sendMessageToServer(commandType protocol.CommandType, messageLength int, data []byte) error {
-	// first byte is for command type
-	command := []byte{uint8(commandType)}
-	// 2nd and 3rd bytes for messageLength
-	messageLengthBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(messageLengthBytes, uint16(messageLength))
-	command = append(command, messageLengthBytes...)
-	// rest is data
-	if data != nil {
-		command = append(command, data...)
-	}
-
-	_, err := cli.dataStream.Write(command)
+func (cli *Client) sendMessageToServer(data []byte) error {
+	_, err := cli.dataStream.Write(data)
 	if err != nil {
 		return err
 	}

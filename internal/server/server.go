@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/binary"
 	"io"
 	"log"
 	"net"
@@ -63,23 +62,23 @@ func (server *Server) Start(laddr *net.TCPAddr) error {
 
 }
 
-// listen function listens and accepts client connections
 func (server *Server) listen() error {
+	defer server.Stop()
 	for {
 		clientStreamer, err := server.dataStreamer.Accept()
 
 		if err != nil {
 			log.Print(err)
+			return err
 		} else {
-			client := server.accept(clientStreamer)
+			client := server.createClient(clientStreamer)
 			go server.serve(client)
 		}
 
 	}
 }
 
-// accept connections from connected client add it to connected clients
-func (server *Server) accept(clientStreamer datastream.IDataStreamer) *client {
+func (server *Server) createClient(clientStreamer datastream.IDataStreamer) *client {
 	server.clientMutex.Lock()
 	defer server.clientMutex.Unlock()
 	clientID := uint64(len(server.clients) + 1)
@@ -107,7 +106,6 @@ func (server *Server) serve(client *client) {
 		data, err := client.dataStreamer.ReadByte()
 
 		if err == io.EOF {
-			log.Printf("EOF reached")
 			break
 		}
 
@@ -127,21 +125,19 @@ func (server *Server) serve(client *client) {
 			switch v := command.(type) {
 			case protocol.WhoAmICommand:
 				server.handleWhoAmICommand(client)
+				break
 			case protocol.ListClientsCommand:
 				server.handleListClientsCommand(client)
+				break
 			case protocol.SendMessageCommand:
 				server.handleSendMessageCommand(client, command.(protocol.SendMessageCommand))
-
+				break
 			default:
 				log.Printf("Unknown command: %v", v)
+				break
 			}
 		}
 	}
-}
-
-// ListClientIDs return the connected clients ids
-func (server *Server) ListClientIDs() []uint64 {
-	return server.clientIDs
 }
 
 // Stop accepting connections and close the existing ones
@@ -171,72 +167,36 @@ func (server *Server) remove(client *client) {
 	client.dataStreamer.CloseConnection()
 }
 
-func (server *Server) sendMessageToClient(client *client, commandType protocol.CommandType, messageLength int, data []byte) {
+// ListClientIDs return the connected clients ids
+func (server *Server) ListClientIDs() []uint64 {
+	return server.clientIDs
+}
+
+func (server *Server) sendMessageToClient(client *client, message []byte) {
 	server.clientMutex.Lock()
 	defer server.clientMutex.Unlock()
-	// first byte is for command type
-	command := []byte{uint8(commandType)}
-	// 2nd and 3rd bytes for messageLength
-	messageLengthBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(messageLengthBytes, uint16(messageLength))
-	command = append(command, messageLengthBytes...)
-	// rest is data
-	if data != nil {
-		command = append(command, data...)
-	}
-	//todo error handling
-	client.dataStreamer.Write(command)
+	client.dataStreamer.Write(message)
 	client.dataStreamer.Flush()
 }
 
 func (server *Server) handleWhoAmICommand(client *client) {
-	dataBytes := []byte{}
-
-	clientIDBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(clientIDBytes, client.id)
-	dataBytes = append(dataBytes, clientIDBytes...)
-
-	// calculate command length (commandType + messageLength + clientID)
-	messageLength := protocol.CommandLengthType + protocol.CommandLengthMessageLength + 8
-	server.sendMessageToClient(client, protocol.CommandTypeWhoAmI, messageLength, dataBytes)
+	command := protocol.WhoAmICommand{ClientID: client.id}
+	server.sendMessageToClient(client, command.ToByteArray())
 }
 
 func (server *Server) handleListClientsCommand(client *client) {
-	dataBytes := []byte{}
-
-	connectedClientBytes := make([]byte, 8)
-	for i := 0; i < len(server.clients); i++ {
-		if server.clients[i].id != client.id {
-			binary.LittleEndian.PutUint64(connectedClientBytes, server.clients[i].id)
-			dataBytes = append(dataBytes, connectedClientBytes...)
-		}
-	}
-
-	// calculate command length (commandType + messageLength + (clientCount-1)*8)
-	messageLength := protocol.CommandLengthType + protocol.CommandLengthMessageLength + (8 * (len(server.clients) - 1))
-	server.sendMessageToClient(client, protocol.CommandTypeListClients, messageLength, dataBytes)
+	command := protocol.ListClientsCommand{ConnectedClients: server.clientIDs}
+	server.sendMessageToClient(client, command.ToByteArray(client.id))
 }
 
 func (server *Server) handleSendMessageCommand(client *client, command protocol.SendMessageCommand) {
-	dataBytes := []byte{}
-
-	senderBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(senderBytes, client.id)
-
-	bodyBytes := command.Body
-
-	dataBytes = append(dataBytes, senderBytes...)
-	dataBytes = append(dataBytes, bodyBytes...)
-
-	// calculate command length (commandType + messageLength + senderid + messagebody)
-	messageLength := protocol.CommandLengthType + protocol.CommandLengthMessageLength + protocol.CommandLengthClient + len(bodyBytes)
+	msgFromClientCommand := protocol.MessageFromClient{Body: command.Body, SenderID: client.id}
 	for i := 0; i < len(command.Recipients); i++ {
-		client := server.getClientByID(command.Recipients[i])
-		server.sendMessageToClient(client, protocol.CommandTypeMessageFromClient, messageLength, dataBytes)
+		recipient := server.getClientByID(command.Recipients[i])
+		server.sendMessageToClient(recipient, msgFromClientCommand.ToByteArray())
 	}
 }
 
-// getClientById gets client id and returns id with that client
 func (server *Server) getClientByID(clientID uint64) *client {
 	for i := 0; i < len(server.clients); i++ {
 		if server.clients[i].id == clientID {

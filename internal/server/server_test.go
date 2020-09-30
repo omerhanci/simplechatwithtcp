@@ -94,7 +94,7 @@ func TestAcceptFunctionShouldCreateClientObjectAndSetClientID(t *testing.T) {
 		protocolParserProducer: fakeProtocolParserProducer,
 		clientMutex:            &sync.Mutex{}}
 
-	response := server.accept(fakeDataStreamer)
+	response := server.createClient(fakeDataStreamer)
 	assert.Equal(t, response.id, uint64(1))
 	assert.Equal(t, response.dataStreamer, fakeDataStreamer)
 }
